@@ -1,0 +1,115 @@
+#!/usr/bin/python3
+
+
+import re
+import readline
+if __name__ != "__main__":
+        import __main__
+
+udp_161 = ["udp","161","1"]
+udp_162 = ["udp","162","1"]
+udp_514 = ["udp","514","2"]
+udp_135 = ["udp","135","3"]
+tcp_445 = ["tcp","445","4"]
+tcp_135 = ["tcp","135","9"]
+udp_445 = ["udp","445","5"]
+icmp_timestamp = ["icmp","timestamp"]
+udp_123 = ["udp","123","8"]
+udp_137 = ["udp","137","10"]
+udp_138 = ["udp","138","10"]
+udp_139 = ["udp","139","10"]
+port_list = [udp_161,udp_162,udp_514,udp_135,tcp_445,tcp_135,tcp_445,udp_445,icmp_timestamp,udp_123,udp_137,udp_138,udp_139]
+
+
+operator_range = "range (\w+) (\w+)"
+operator_less_than = "lt (\d+)"
+operator_greater_than = "gt (\d+)"
+operator_equals = "eq (\d+)"
+
+operator_list = [operator_range,operator_less_than,operator_greater_than,operator_equals]
+
+match_any = "any"
+match_host = "host \d+\.\d+\.\d+\.\d+"
+match_network = "\d+\.\d+\.\d+\.\d+ \d+\.\d+\.\d+\.\d+"
+
+source_list = [match_any,match_host,match_network]
+destination_list = [match_any,match_host,match_network]
+
+def update_uce_customer_acl(new_permits):
+        with open('/home/xxxx/acl_check/customerFilter.py','r') as aclfile:
+                new_uce_customer_acl = aclfile.read()
+                new_uce_customer_acl_list = new_uce_customer_acl.split('\n')
+        for new_statement in new_permits:
+                for uce_line in new_uce_customer_acl_list:
+                        if re.match(r'\s'+new_statement[1],uce_line):
+                                client_acl_line = new_statement[0]
+                                ind = new_uce_customer_acl_list.index(uce_line)
+                                client_acl_line = re.sub(r'^\s+\d+','',client_acl_line)
+                                client_acl_line = re.sub(r'^access-list \w+ ','',client_acl_line)
+                                client_acl_line = re.sub(r'\s+\(.+\)','',client_acl_line)
+                                new_uce_customer_acl_list.insert(ind,client_acl_line)
+                                break
+
+
+def acl_checker():
+        print("ACL Checker will check to see if any lines in an ACL will be denied by the new customerFilter ACL on new UCE CPE config")
+        print("Paste ACL and then Ctrl+D to run ACL Checker")
+        acl_list = []
+        while True:
+                try:
+                        input_line = input("")
+                except EOFError:
+                        break
+                acl_list.append(input_line)
+
+        client_acl_deny_list = []
+        for acl_line in acl_list:
+                for source in source_list:
+                        for destination in destination_list:
+                                for operator in operator_list:
+                                        for port in port_list:
+                                                deny_match = re.search(r'permit\s'+port[0]+"\s"+source+'.*'+destination+"\s"+operator,acl_line)
+                                                if deny_match:
+                                                        if re.match(r'range',operator):
+                                                                if deny_match.group(1).isnumeric() and deny_match.group(2).isnumeric():
+                                                                        if int(port[1]) >= int(deny_match.group(1)) and int(port[1]) <= int(deny_match.group(2)):
+                                                                                client_acl_deny_list.append([acl_line,port[2]])
+                                                                                acl_list.remove(acl_line)
+                                                                                break
+                                                        elif re.match(r'lt',operator):
+                                                                if deny_match.group(1).isnumeric():
+                                                                        if int(port[1]) <= int(deny_match.group(1)):
+                                                                                client_acl_deny_list.append([acl_line,port[2]])
+                                                                                acl_list.remove(acl_line)
+                                                                                break
+                                                        elif re.match(r'gt',operator):
+                                                                if deny_match.group(1).isnumeric():
+                                                                        if int(port[1]) >= int(deny_match.group(1)):
+                                                                                client_acl_deny_list.append([acl_line,port[2]])
+                                                                                acl_list.remove(acl_line)
+                                                                                break
+                                                        elif re.match(r'eq',operator):
+                                                                if deny_match.group(1).isnumeric():
+                                                                        if int(port[1]) == int(deny_match.group(1)):
+                                                                                client_acl_deny_list.append([acl_line,port[2]])
+                                                                                acl_list.remove(acl_line)
+                                                                                break
+                                                                elif deny_match.group(1).isalpha():
+                                                                        numeric_port = port_alpha_to_numeric(deny_match.group(1))
+                                                                        if numeric_port.isnumeric():
+                                                                                if int(port[1]) == int(numeric_port):
+                                                                                        client_acl_deny_list.append([acl_line,port[2]])
+                                                                                        acl_list.remove(acl_line)
+                                                                                        break
+        if __name__ != "__main__":
+                __main__.clear()
+                __main__.sleep(.25)
+        if len(client_acl_deny_list) > 0:
+                print("These lines from old ACL will be denied by customerFilter ACL on new CPE config:")
+                for client_deny in client_acl_deny_list:
+                        print("\t"+client_deny[0])
+                create = input("Create new ACL?(y/n): ")
+                if create == 'y':
+                        update_uce_customer_acl(client_acl_deny_list)
+        else:
+                print("Could not find any ACL entries that will be denied in new UCE ACL!")
